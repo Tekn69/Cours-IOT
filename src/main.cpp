@@ -1,7 +1,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <nvs_flash.h>
-#include "sensors/sensor_manager.h"
+#include "sensors/sensor_manager.h" // Gives access to extern variables and initEmergencyButton()
 #include "storage/storage_manager.h"
 #include "web/web_manager.h"
 #include "network/mqtt_manager.h"
@@ -12,12 +12,14 @@ const char *ap_password = "SecurePassword123";
 const char *sta_ssid = "TaharTrb";
 const char *sta_password = "123456789";
 
+// REMOVED: volatile bool isEmergencyActive = false; -> Handled by sensor_manager
+// REMOVED: const int EMERGENCY_BUTTON_PIN = 14;     -> Handled by sensor_manager
+
 // Tâche Réseau dédiée : Gère la machine d'état MQTT en arrière-plan sur le Core 0
 void networkTask(void *parameter)
 {
   for (;;)
   {
-    // Si la connexion à la box/VM est active, on fait tourner la pile MQTT
     if (WiFi.status() == WL_CONNECTED)
     {
       handleMQTT();
@@ -26,9 +28,9 @@ void networkTask(void *parameter)
     {
       Serial.println("[WIFI] Reconnecting to infrastructure network...");
       WiFi.begin(sta_ssid, sta_password);
-      vTaskDelay(pdMS_TO_TICKS(10000)); // Attend 10s avant de réessayer en cas de perte
+      vTaskDelay(pdMS_TO_TICKS(10000));
     }
-    vTaskDelay(pdMS_TO_TICKS(1000)); // Fréquence de rafraîchissement de la pile réseau
+    vTaskDelay(pdMS_TO_TICKS(1000));
   }
 }
 
@@ -48,7 +50,7 @@ void setup()
   delay(1500);
   Serial.println("\n--- SYSTEM INITIALIZATION START ---");
 
-  // 1. Force Clean NVS Initialization to fix the softAP configuration crash
+  // 1. Force Clean NVS Initialization
   esp_err_t ret = nvs_flash_init();
   if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND)
   {
@@ -62,7 +64,7 @@ void setup()
   // 2. Clean Wi-Fi Driver Sequence & Mode Double (AP + STA)
   WiFi.disconnect(true, true);
   delay(200);
-  WiFi.mode(WIFI_AP_STA); // Mode mixte crucial : Permet la page web locale ET le MQTT externe
+  WiFi.mode(WIFI_AP_STA);
   delay(200);
 
   // Configuration du Point d'Accès local (AP)
@@ -83,7 +85,6 @@ void setup()
   Serial.printf("[WIFI] Connecting to infrastructure network: %s...\n", sta_ssid);
   WiFi.begin(sta_ssid, sta_password);
 
-  // Attente non-bloquante initiale (max 10 secondes pour ne pas figer le boot)
   int timeout = 0;
   while (WiFi.status() != WL_CONNECTED && timeout < 20)
   {
@@ -105,6 +106,11 @@ void setup()
   // 3. Initialize Storage, Sensors & MQTT Configuration
   initStorage();
   initSensors();
+
+  // FIXED: Added the hardware initialization call here
+  initEmergencyButton();
+  Serial.println("[SYSTEM] Emergency Hardware Interrupt configured on GPIO 14.");
+
   initMQTT();
 
   // 4. Initialize Local Web Server
@@ -115,13 +121,12 @@ void setup()
   startSensorTask();
   Serial.println("[OS] Sensor Task deployed to Core 1.");
 
-  // Tâche de gestion Réseau/MQTT déployée sur le Core 0
   xTaskCreatePinnedToCore(
       networkTask,
       "NetworkTask",
       4096,
       NULL,
-      1,
+      5, // increase network priority
       NULL,
       0);
   Serial.println("[OS] Network/MQTT Task deployed to Core 0.");

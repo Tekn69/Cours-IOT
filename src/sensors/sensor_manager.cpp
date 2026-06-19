@@ -3,6 +3,7 @@
 #include "../network/mqtt_manager.h"
 
 #define LED_PIN 2
+const int EMERGENCY_BUTTON_PIN = 14;
 
 static byte triggerPin = 21;
 static byte echoCount = 1;
@@ -11,6 +12,26 @@ static double distances[1];
 
 static SensorData latestData = {0.0, 0, false};
 static portMUX_TYPE dataMux = portMUX_INITIALIZER_UNLOCKED;
+
+// Keeps track of the active state
+volatile bool isEmergencyActive = false;
+
+// The ISR now updates the state dynamically on any voltage change
+void IRAM_ATTR handleEmergencyInterrupt()
+{
+    isEmergencyActive = (digitalRead(EMERGENCY_BUTTON_PIN) == LOW);
+}
+
+void initEmergencyButton()
+{
+    pinMode(EMERGENCY_BUTTON_PIN, INPUT_PULLUP);
+
+    // Set to CHANGE so it triggers when plugged in (FALLING) AND unplugged (RISING)
+    attachInterrupt(digitalPinToInterrupt(EMERGENCY_BUTTON_PIN), handleEmergencyInterrupt, CHANGE);
+
+    // Initial check in case it's already plugged in at boot
+    isEmergencyActive = (digitalRead(EMERGENCY_BUTTON_PIN) == LOW);
+}
 
 void initSensors()
 {
@@ -25,6 +46,20 @@ void sensorTaskFunction(void *parameter)
 
     for (;;)
     {
+        // Continuous live safety check
+        if (digitalRead(EMERGENCY_BUTTON_PIN) == LOW)
+        {
+            isEmergencyActive = true;
+            digitalWrite(LED_PIN, !digitalRead(LED_PIN)); // Toggle LED state (Blink)
+            vTaskDelay(pdMS_TO_TICKS(250));
+            continue;
+        }
+        else
+        {
+            isEmergencyActive = false; // Automatically clears when wire is removed
+        }
+
+        // --- NORMAL MODE ---
         HCSR04.measureDistanceCm(distances);
         double currentDistance = distances[0];
         bool valid = true;
@@ -43,7 +78,6 @@ void sensorTaskFunction(void *parameter)
         {
             timeoutCount = 0;
 
-            // ACTION : Publication automatique vers le Broker de votre binôme
             publishDistance(currentDistance);
 
             if (currentDistance > 0 && currentDistance < 6.0)

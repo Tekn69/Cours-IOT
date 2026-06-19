@@ -19,8 +19,12 @@ void initStorage()
 // Vérification silencieuse et propre de l'existence du fichier
 bool hasOfflineData()
 {
-    // On tente d'ouvrir le fichier en mode lecture.
-    // Si l'ouverture échoue, c'est qu'il n'existe pas, sans lever d'erreur VFS bloquante.
+    // FIX: Check existence first to prevent lower-level VFS error logs
+    if (!LittleFS.exists(offlineFile))
+    {
+        return false;
+    }
+
     File file = LittleFS.open(offlineFile, FILE_READ);
     if (!file)
     {
@@ -66,7 +70,8 @@ void saveOfflineData(const String &jsonPayload)
 // Vidage du cache vers le broker MQTT
 void flushOfflineDataToMQTT()
 {
-    if (!hasOfflineData())
+    // FIX: Pre-check existence here as well
+    if (!LittleFS.exists(offlineFile) || !hasOfflineData())
         return;
 
     File file = LittleFS.open(offlineFile, FILE_READ);

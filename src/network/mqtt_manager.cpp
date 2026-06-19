@@ -1,5 +1,6 @@
 #include "mqtt_manager.h"
 #include "../storage/storage_manager.h"
+#include "../sensors/sensor_manager.h" // Crucial: Includes 'isEmergencyActive'
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
@@ -12,6 +13,7 @@ const char *mqttTopic = "campus/groupe2/ESP32-02/data"; // Format campus/<groupe
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 bool wasConnectedLastLoop = false;
+bool emergencySent = false; // Tracks if the critical alert was already broadcasted
 
 void initMQTT()
 {
@@ -41,6 +43,7 @@ void handleMQTT()
         {
             Serial.print(" Failed, rc=");
             Serial.println(mqttClient.state());
+            return; // Exit early if connection failed to prevent operations below
         }
     }
     else
@@ -55,6 +58,40 @@ void handleMQTT()
             }
         }
     }
+
+    // --- DYNAMIC EMERGENCY HANDLING ---
+    if (isEmergencyActive)
+    {
+        // Only broadcast once when transition to emergency happens
+        if (!emergencySent)
+        {
+            JsonDocument doc;
+            doc["device"] = "ESP32-Distance-Station";
+            doc["ts"] = millis();
+            doc["status"] = "EMERGENCY";
+            doc["message"] = "Emergency button pressed! Measurements stopped.";
+
+            String emergencyPayload;
+            serializeJson(doc, emergencyPayload);
+
+            // Publish with QoS 1/retained to guarantee delivery
+            if (mqttClient.publish(mqttTopic, emergencyPayload.c_str(), true))
+            {
+                Serial.println("[MQTT] CRITICAL: Emergency alert successfully sent to Node-RED.");
+                emergencySent = true; // Block further alert transmissions
+            }
+        }
+    }
+    else
+    {
+        // Reset state tracker automatically when the wire is unplugged (normal operation resumes)
+        if (emergencySent)
+        {
+            Serial.println("[MQTT] Info: Emergency cleared. Ready for future alert states.");
+            emergencySent = false;
+        }
+    }
+
     mqttClient.loop();
 }
 
@@ -63,8 +100,6 @@ void publishRawPayload(const String &payload)
 {
     if (mqttClient.connected())
     {
-        // "true" en 3e paramètre active la rétention ou la QoS selon la bibliothèque,
-        // PubSubClient valide la livraison de base sur l'infrastructure réseau.
         mqttClient.publish(mqttTopic, payload.c_str(), false);
     }
 }
@@ -72,6 +107,10 @@ void publishRawPayload(const String &payload)
 // Formate les données en respectant scrupuleusement la structure imposée par le PDF
 void publishDistance(double distance)
 {
+    // Block regular transmission completely if emergency mode is flagged
+    if (isEmergencyActive)
+        return;
+
     JsonDocument doc;
     doc["device"] = "ESP32-Distance-Station";
     doc["ts"] = millis(); // Timestamp local
