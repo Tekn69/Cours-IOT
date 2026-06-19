@@ -1,0 +1,13 @@
+body {
+    font-family: Arial, sans-serif;
+    background: #f4f4f4;
+    text-align: center;
+}
+
+#config-box {
+    margin: 20px auto;
+    padding: 15px;
+    background: white;
+    width: 300px;
+    border-radius: 8px;
+}
