@@ -141,9 +141,11 @@ void setup()
       0);
   Serial.println("[OS] Supervision Task deployed to Core 0.");
   Serial.println("--- SYSTEM INITIALIZATION COMPLETE ---");
+  vTaskDelete(loop);
 }
 
 void loop()
 {
   // Left empty as mandated by the project specifications
+  vTaskDelay(1000);
 }
